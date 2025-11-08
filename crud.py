@@ -35,6 +35,162 @@ CSRF_TOKEN_EXPIRE_MINUTES =30
 
 #models
 
+from pydantic import BaseModel,field_validator,EmailStr,Field, ConfigDict
+from typing import Optional
+from datetime import datetime,timezone
+import re
+
+
+class Tokenn(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str
+    
+class UserBase(BaseModel):
+    email: EmailStr
+    
+    # @field_validator("email",mode='before')
+    # @classmethod
+    # def validate_email(cls, value:str) -> str:
+    #     return value.lower()
+    
+class Refresh(UserBase):
+    id: int
+    
+    
+
+class UserCreate(UserBase):
+    surname:str = Field(
+        max_length=20,
+        validation_error_messages={
+            'string_too_long':'Surname cannot be more than 20',
+        }
+        )
+    othernames:str
+    password:str
+    
+    @field_validator("email",mode='before')
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.lower()
+    
+    @field_validator("password")
+    @classmethod
+    def validate(cls, value:str) -> str:
+        if not re.match(r"^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])[a-zA-Z0-9#@$]{8-12}",value):
+            raise ValueError("password must be at least 8 or 20 characters long,atleast upper case letters,lower case letters,0-9 digits,special characters #@$,no space ")
+        return value
+    
+    @field_validator("surname")
+    @classmethod
+    def validate_surname(cls,value:str) -> str:
+        
+        
+        if not re.match(r'^[a-zA-Z]+$',value):
+            raise ValueError('Surname must contain only alphabetics characters and no space')
+        return value.upper()
+    
+    @field_validator(othernames)
+    @classmethod
+    def validate_othernames(cls,value:str) -> str:
+        if not re.match(r'^[a-zA-Z\s]+$',value):
+            raise ValueError('Names must contain only alphabetics characters')
+        names = " ".join(value.split())
+        return names.upper()
+    
+    #model_config=ConfigDict(from_attributes=True)   
+    
+class ReadUser(UserBase): #or use basemodel
+    id: int
+    surname:str
+    othernames:str
+    verified: bool
+    date_verified: Optional[datetime] = None
+    date_added: datetime #datetime.now(timezone.utc)
+    date_modify:datetime
+        
+        # only needed in read
+    class Config:
+        from_attributes=True
+        
+
+class Users(ReadUser): #UsersInDb
+    #model_config=ConfigDict(from_attributes=True) # this will mapped these fields to corresponding fields in User table
+    hashed_password: str
+    disable: bool 
+    payment_id: Optional[str] = None
+    one_click:bool
+        
+class VerifyOtp(UserBase): # for reg
+    otp_code:str = Field(...,min_length=6,max_length=6,pattern=r"^\d{6}$",description="6 digits otp")
+    csrf_token:str
+    
+    
+class LoginUser(UserBase):
+    password: str
+    
+    
+class TokenData(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str
+    
+
+class VerifyPassword(BaseModel):
+    password:str
+    
+class UpdateUser(BaseModel): #BaseModel
+    email:EmailStr | None = None
+    surname:str | None = None
+    othernames: str | None = None
+    
+     
+    @field_validator("email",mode='before')
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.lower()
+    
+    @field_validator("surname")
+    @classmethod
+    def validate_surname(cls,value:str) -> str:
+        
+        
+        if not re.match(r'^[a-zA-Z]+$',value):
+            raise ValueError('Surname must contain only alphabetics characters and no space')
+        return value.upper()
+    
+    @field_validator(othernames)
+    @classmethod
+    def validate_othernames(cls,value:str) -> str:
+        if not re.match(r'^[a-zA-Z\s]+$',value):
+            raise ValueError('Names must contain only alphabetics characters')
+        names = " ".join(value.split())
+        return names.upper()
+    
+    
+class UpdatePassword(BaseModel):
+    current_password:str
+    new_password:str
+    
+    
+class ForgotPassword(BaseModel):
+    email:EmailStr
+    
+class ResetPassword(BaseModel):
+    email:EmailStr
+    otp:str
+    new_password:str
+            
+            
+    
+        
+
+# auth
+
 def hash_user_password(password:str)-> str:
         return pwd_context.hash(password)    
    
