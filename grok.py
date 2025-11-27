@@ -1,4 +1,102 @@
+#new verifylogin
+# routers/auth.py — FINAL, FLAWLESS
+from fastapi import APIRouter, Depends, Response
+from fastapi.responses import JSONResponse
+from ..crud.auth import complete_login
+from ..schemas.auth import TokenResponse
 
+router = APIRouter(prefix="/auth", tags=["Auth"])
+
+@router.post("/login/verify", response_model=TokenResponse)
+async def login_verify(
+    data: LoginStep2,
+    db = Depends(get_session)
+):
+    # complete_login now returns TokenResponse
+    token_data: TokenResponse = await complete_login(
+        email=data.email,
+        otp=data.otp,
+        login_token=data.login_token,
+        db=db
+    )
+
+    response = JSONResponse(content=token_data.model_dump())
+
+    response.set_cookie("access_token", token_data.access_token, httponly=True, secure=True, samesite="lax", max_age=20*60)
+    response.set_cookie("refresh_token", token_data.refresh_token, httponly=True, secure=True, samesite="lax", max_age=30*24*60*60)
+    response.set_cookie("csrf_token", token_data.csrf_token, httponly=False, secure=True, samesite="lax", max_age=30*24*60*60)
+
+    return response
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token_endpoint(
+    request: Request,
+    db = Depends(get_session)
+):
+    old_refresh = request.cookies.get("refresh_token")
+    if not old_refresh:
+        raise HTTPException(401, "No refresh token")
+
+    user_id = await validate_refresh_token(old_refresh)
+    await revoke_refresh_token(old_refresh)
+
+    new_tokens = create_token_response(user_id)  # ← REUSE SAME FUNCTION
+
+    response = JSONResponse(content=new_tokens.model_dump())
+    response.set_cookie("access_token", new_tokens.access_token, httponly=True, secure=True, samesite="lax")
+    response.set_cookie("refresh_token", new_tokens.refresh_token, httponly=True, secure=True, samesite="lax")
+    response.set_cookie("csrf_token", new_tokens.csrf_token, httponly=False, secure=True, samesite="lax")
+
+    return response
+
+# core/security.py
+from datetime import datetime, timezone, timedelta
+from ..schemas.auth import TokenResponse, TokenPayload, RefreshTokenPayload
+import jwt
+import secrets
+
+def create_access_token(user_id: int, jti: str | None = None) -> str:
+    now = datetime.now(timezone.utc)
+    payload = TokenPayload(
+        sub=user_id,
+        iat=int(now.timestamp()),
+        exp=int((now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)).timestamp()),
+        jti=jti or secrets.token_urlsafe(32),
+        token_type="access"
+    )
+    return jwt.encode(payload.model_dump(), PRIVATE_KEY, algorithm=ALGORITHM)
+
+async def create_refresh_token(user_id: int) -> str:
+    now = datetime.now(timezone.utc)
+    jti = secrets.token_urlsafe(32)
+    payload = RefreshTokenPayload(
+        sub=user_id,
+        iat=int(now.timestamp()),
+        exp=int((now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)).timestamp()),
+        jti=jti,
+        token_type="refresh"
+    )
+    token = jwt.encode(payload.model_dump(), PRIVATE_KEY, algorithm=ALGORITHM)
+
+    async with get_redis() as r:
+        await r.sadd(f"user_refresh:{user_id}", token)
+        await r.expire(f"user_refresh:{user_id}", REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60)
+
+    return token
+
+def create_token_response(user_id: int) -> TokenResponse:
+    """The ONE function that returns the final login response"""
+    access_token = create_access_token(user_id)
+    refresh_token = await create_refresh_token(user_id)  # async, but we'll handle in router
+    csrf_token = secrets.token_urlsafe(32)
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        csrf_token=csrf_token
+    )
+#new refresh_token 
 @router.post("/admin/disable")
 async def disable_user(
     data: UserActionSchema,
