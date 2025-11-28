@@ -1,3 +1,78 @@
+#final login
+
+# routers/auth.py — FINAL, BANK-GRADE, SECURE BY DEFAULT
+
+@router.post("/login/verify")
+async def login_verify(
+    data: LoginStep2,
+    db: AsyncSession = Depends(get_session)
+):
+    tokens = await complete_login(
+        email=data.email,
+        otp=data.otp,
+        login_token=data.login_token,
+        db=db
+    )
+
+    response = JSONResponse(content={"message": "Login successful"})
+
+    response.set_cookie(
+        key="access_token",
+        value=tokens.access_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=20 * 60,
+        path="/"                     # Needed everywhere
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=tokens.refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=30 * 24 * 60 * 60,
+        path="/auth/refresh"         # ONLY accessible on /auth/refresh
+    )
+    response.set_cookie(
+        key="csrf_token",
+        value=tokens.csrf_token,
+        httponly=False,
+        secure=True,
+        samesite="lax",
+        max_age=30 * 24 * 60 * 60,
+        path="/"
+    )
+
+    return response
+
+#Last modify refresh
+
+@router.post("/refresh")
+async def refresh_token_endpoint(request: Request):
+    old_refresh_token = request.cookies.get("refresh_token")
+    if not old_refresh_token:
+        raise HTTPException(status_code=401, detail="No refresh token")
+
+    user_id = await validate_refresh_token(old_refresh_token)
+    await revoke_refresh_token(old_refresh_token)
+
+    new_tokens = await create_token_response(user_id)
+
+    response = JSONResponse(content={"message": "Tokens refreshed"})
+
+    response.set_cookie("access_token", new_tokens.access_token,
+                        httponly=True, secure=True, samesite="lax", max_age=1200, path="/")
+    
+    response.set_cookie("refresh_token", new_tokens.refresh_token,
+                        httponly=True, secure=True, samesite="lax",
+                        max_age=30*24*60*60, path="/auth/refresh")  # ← CRITICAL!
+    
+    response.set_cookie("csrf_token", new_tokens.csrf_token,
+                        httponly=False, secure=True, samesite="lax",
+                        max_age=30*24*60*60, path="/")
+
+    return response
 #final /refresh 
 @router.post("/refresh")
 async def refresh_token_endpoint(request: Request):
@@ -51,28 +126,7 @@ from fastapi.responses import JSONResponse
 from ..crud.auth import complete_login
 from ..schemas.auth import TokenResponse
 
-router = APIRouter(prefix="/auth", tags=["Auth"])
 
-@router.post("/login/verify", response_model=TokenResponse)
-async def login_verify(
-    data: LoginStep2,
-    db = Depends(get_session)
-):
-    # complete_login now returns TokenResponse
-    token_data: TokenResponse = await complete_login(
-        email=data.email,
-        otp=data.otp,
-        login_token=data.login_token,
-        db=db
-    )
-
-    response = JSONResponse(content=token_data.model_dump())
-
-    response.set_cookie("access_token", token_data.access_token, httponly=True, secure=True, samesite="lax", max_age=20*60)
-    response.set_cookie("refresh_token", token_data.refresh_token, httponly=True, secure=True, samesite="lax", max_age=30*24*60*60)
-    response.set_cookie("csrf_token", token_data.csrf_token, httponly=False, secure=True, samesite="lax", max_age=30*24*60*60)
-
-    return response
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -335,30 +389,7 @@ async def login_step1(
     return result
 
 
-@router.post("/login/verify")
-async def login_step2(
-    data: LoginStep2,
-    db = Depends(get_session)
-):
-    tokens = await complete_login(
-        email=data.email,
-        otp=data.otp,
-        login_token=data.login_token,
-        db=db
-    )
 
-    response = JSONResponse({
-        "message": "Login successful",
-        "access_token": tokens["access_token"],
-        "refresh_token": tokens["refresh_token"],
-        "csrf_token": tokens["csrf_token"]
-    })
-
-    response.set_cookie("access_token", tokens["access_token"], httponly=True, secure=True, samesite="lax", max_age=20*60)
-    response.set_cookie("refresh_token", tokens["refresh_token"], httponly=True, secure=True, samesite="lax", max_age=30*24*60*60)
-    response.set_cookie("csrf_token", tokens["csrf_token"], httponly=False, secure=True, samesite="lax", max_age=30*24*60*60)
-
-    return response
 
 
 @router.post("/logout")
