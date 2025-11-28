@@ -1,3 +1,49 @@
+#final /refresh 
+@router.post("/refresh")
+async def refresh_token_endpoint(request: Request):
+    old_refresh_token = request.cookies.get("refresh_token")
+    if not old_refresh_token:
+        raise HTTPException(status_code=401, detail="No refresh token")
+
+    user_id = await validate_refresh_token(old_refresh_token)
+    await revoke_refresh_token(old_refresh_token)
+
+    new_tokens = await create_token_response(user_id)
+
+    # DO NOT send tokens in body — security risk + duplication
+    response = JSONResponse(content={"message": "Tokens refreshed"})
+
+    # Only set in secure HttpOnly cookies
+    response.set_cookie(
+        key="access_token",
+        value=new_tokens.access_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=20 * 60,
+        path="/"
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=new_tokens.refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=30 * 24 * 60 * 60,
+        path="/"
+    )
+    response.set_cookie(
+        key="csrf_token",
+        value=new_tokens.csrf_token,
+        httponly=False,   # JS needs to read
+        secure=True,
+        samesite="lax",
+        max_age=30 * 24 * 60 * 60,
+        path="/"
+    )
+
+    return response
+
 #new verifylogin
 # routers/auth.py — FINAL, FLAWLESS
 from fastapi import APIRouter, Depends, Response
