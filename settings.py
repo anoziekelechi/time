@@ -1,1 +1,167 @@
+#main.py
+from fastapi import FastAPI,Request,Depends
+from api.core.redis import get_redis_pool
+from api.core.database import engine,init_db
+from contextlib import asynccontextmanager
+from api.products.views import router as products_router
+from fastapi_limiter import FastAPILimiter
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import logging
+from api.core.settings import get_settings, AppMode,Settings
 
+
+
+# ___ LOGGIN CONGIG _____
+logging.basicConfig(
+    level=logging.DEBUG if get_settings().is_development() else logging.INFO,
+    format ="%(asctime)s | %(name)s | %(levelname)s | %(filename)s:%(lineno)d -> %(message)s",
+    handlers=[logging.StreamHandler()],
+    force=True,
+    
+)
+logger = logging.getLogger("api")
+logger.info(f"starting API in {get_settings().app_mode.upper()} mode")
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    #start
+    await init_db()
+    app.state.redis_pool = await get_redis_pool()
+    await FastAPILimiter.init(app.state.redis_pool)
+    yield
+    #shutdown
+    await engine.dispose()
+    await app.state.redis_pool.aclose()
+    
+mode = get_settings().app_mode
+    
+app=FastAPI(title="Ecommerce app",docs_url="/api/docs",redoc_url="/api/redoc",openapi_url="/api/openapi.json")  
+
+origins = [
+    "http://localhost:5174/",
+    #"http://myfrontenddomain.com"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+#routes
+app.include_router(products_router)
+# other routers goes here
+
+
+# ___ Register generic error  in production
+if get_settings().app_mode == AppMode.PRODUCTION:
+    #def get_global_exception():
+    async def production_exception(_request: Request, exc: Exception):
+        logger.exception("internal server error")
+        return JSONResponse(status_code=500,content={"detail":"something went wrong please try again later"})
+    app.add_exception_handler(Exception,production_exception())
+    logger.info("global exception handler enabled(production mode)")
+else:
+    logger.info("global exception handler disabled(debug mode on)")
+#redis.py
+import redis.asyncio as redis
+from typing import AsyncGenerator,Annotated
+from contextlib import asynccontextmanager
+
+REDIS_URL="redis://localhost:6379" #try move this to settings settings().Redis_url
+
+Redis_connection=redis.Redis
+
+# create a usable redis connection pool
+async def get_redis_pool() -> redis.Redis:
+    return await redis.from_url(REDIS_URL, decode_responses = True)
+ 
+ 
+ # redis dependency       
+@asynccontextmanager
+async def get_redis() ->AsyncGenerator[redis.Redis,None]:
+    client = await redis.from_url(REDIS_URL,decode_response=True)
+    try:
+        await client.ping()
+        yield client
+    except redis.ConnectionError as e:
+        raise Exception(f"failed to connect to redis:{e}")
+    finally:
+        pass #no need to close as pool is managed by lifespan
+#taslk.py
+from tenacity import retry, stop_after_attempt,wait_exponential, retry_if_exception_type
+import logging
+import asyncio
+from fastapi_mail import FastMail, MessageSchema, MessageType
+from api.core.mail import mail_config
+from api.core.celery import app_name
+
+logger=logging.getLogger(__name__)
+
+@retry(
+    stop=stop_after_attempt(4),
+    wait= wait_exponential(multiplier=2, min=2, max=30),
+    retry=retry_if_exception_type((ConnectionError, TimeoutError, Exception)),
+    before_sleep=lambda rs:logger.warning(
+        f"OTP email failed(attempt {rs.attempt_number}).Retrying in {rs.next_action.sleep:.1f}s..."),
+    reraise=True,
+)
+async def _send_otp_email(recipient:str, otp:str, subject:str) -> None:
+    message=MessageSchema(
+        subject=subject,
+        recipients=[recipient],
+        body=f"Your OTP is {otp} it expires in 20 minutes",
+        subtype=MessageType.plain,
+    )
+    fm=FastMail(mail_config)
+    await fm.send_message(message)
+    logger.info(f"OTP email sent to {recipient}")
+    
+    
+@app_name.task(bind=True,max_retries=0)
+def send_otp_email_task(self, recipient:str, otp:str, subject:str):
+    try:
+        loop=asyncio.get_event_loop()
+        loop.run_until_complete(_send_otp_email(recipient,otp,subject))
+    except Exception as exc:
+        logger.error(f"Failed to send OTP to {recipient} after all retries: {exc}")
+        raise
+        
+#celery
+from api.core.settings import get_settings
+from celery import Celery
+
+app_name = Celery(
+    "underground_task",
+    broker=get_settings().broker,
+    #backend=
+    )
+app_name.autodiscover_tasks()
+
+#mail
+  from fastapi_mail import FastMail, ConnectionConfig
+from api.core.settings import get_settings
+from typing import AsyncGenerator
+
+mail_config = ConnectionConfig(
+    MAIL_USERNAME=get_settings().MAIL_USERNAME,
+    MAIL_PASSWORD=get_settings().MAIL_PASSWORD,
+    MAIL_FROM=get_settings().MAIL_FROM,
+    MAIL_PORT=get_settings().MAIL_PORT,
+    MAIL_SERVER=get_settings().MAIL_SERVER,
+    MAIL_SSL=get_settings().MAIL_SSL,
+    MAIL_TLS=get_settings().MAIL_TLS,
+)
+
+
+mail=FastMail(mail_config)
+# mail dependency
+async def get_fastmail() -> AsyncGenerator[FastMail,None]:
+    fm=FastMail(mail_config)
+    yield fm
+       
+        
+        
+      
