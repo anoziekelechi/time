@@ -1,3 +1,63 @@
+#old validate refresh token 
+async def revoke_refresh_token(refresh_token: str):
+    try:
+        payload = jwt.decode(refresh_token, PUBLIC_KEY, algorithms=[ALGORITHM])
+        user_id = payload["sub"]
+        jti = payload["jti"]
+        
+        async with get_redis() as r:
+            await r.srem(f"user_refresh:{user_id}", refresh_token)
+            await r.set(f"blacklist:refresh:{jti}", "1", ex=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60)
+    except Exception: 
+        pass  # already invalid
+
+
+
+async def validate_refresh_token(refresh_token: str) -> int:
+    """
+    Validates a refresh token and returns user_id if valid.
+    Used in /refresh endpoint.
+    """
+    async with get_redis() as r:
+        # 1. Check if token is blacklisted (by jti)
+        try:
+            # First decode without verification first to get jti
+            unverified = jwt.decode(refresh_token, options={"verify_signature": False})
+            jti = unverified.get("jti")
+            token_type = unverified.get("token_type")
+
+            if not jti or token_type != "refresh":
+                raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+            if await r.get(f"blacklist:refresh:{jti}"):
+                raise HTTPException(status_code=401, detail="Token revoked")
+        except jwt.PyJWTError:
+            raise HTTPException(status_code=401, detail="Invalid token format")
+
+        # 2. Now verify signature + expiration
+        try:
+            payload = jwt.decode(
+                refresh_token,
+                PUBLIC_KEY,
+                algorithms=[ALGORITHM],
+                options={"require": ["exp", "sub", "jti", "iat"]}
+            )
+            claims = RefreshTokenPayload(**payload)
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Refresh token expired")
+        except jwt.PyJWTError:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+        user_id = claims.sub
+
+        # 3. Final check: is this exact token still in user's active set?
+        is_member = await r.sismember(f"user_refresh:{user_id}", refresh_token)
+        if not is_member:
+            # Token was revoked or never existed
+            raise HTTPException(status_code=401, detail="Token no longer valid")
+
+        return user_id
+    
 #validate_refresh_token 
 
 async def validate_refresh_token(refresh_token: str) -> int:
@@ -63,7 +123,7 @@ with connectable.connect() as connection:
         connection = connection,
         target_metadata = SQLModel.metadata,
         compare_type = True,
-        compare_server_default= True,
+        compare_server_default= True,#ttt
         
     )
     with context.begin_transaction():
