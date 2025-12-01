@@ -1,3 +1,40 @@
+
+
+
+from sqlalchemy.ext.asyncio import create_async_engine,AsyncSession,async_sessionmaker
+from api.core.settings import get_settings
+from sqlmodel import SQLModel
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
+DATABASE_URL = get_settings().DATABASE_URL
+
+engine=create_async_engine(DATABASE_URL,echo=True, future=True)
+
+AsyncSessionLocal=async_sessionmaker(engine,class_=AsyncSession,expire_on_commit=False)
+
+async def init_db():
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            await session.run_sync(SQLModel.metadata.create_all)
+    
+    
+@asynccontextmanager
+async def get_session() -> AsyncGenerator[AsyncSession,None]:
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+            
+            
+async def get_db() ->  AsyncGenerator[AsyncSession,None]:
+    async with get_session() as session:
+        yield session
 #main.py
 from fastapi import FastAPI,Request,Depends
 from api.core.redis import get_redis_pool
