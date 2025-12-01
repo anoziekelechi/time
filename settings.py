@@ -1,3 +1,42 @@
+#validate_refresh_token 
+
+async def validate_refresh_token(refresh_token: str) -> int:
+    async with get_redis() as r:
+        # 1. Extract jti quickly (no signature check yet)
+        try:
+            unverified = jwt.decode(refresh_token, options={"verify_signature": False})
+            jti = unverified.get("jti")
+            if not jti or unverified.get("token_type") != "refresh":
+                raise HTTPException(status_code=401, detail="Invalid refresh token")
+        except jwt.PyJWTError:
+            raise HTTPException(status_code=401, detail="Malformed token")
+
+        # 2. Blacklist check
+        if await r.get(f"blacklist:refresh:{jti}"):
+            raise HTTPException(status_code=401, detail="Token revoked")
+
+        # 3. Full cryptographic + expiry validation
+        try:
+            payload = jwt.decode(
+                refresh_token,
+                PUBLIC_KEY,
+                algorithms=[ALGORITHM],
+                options={"require": ["exp", "sub", "jti"]}
+            )
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expired")
+        except jwt.PyJWTError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user_id = payload["sub"]
+
+        # 4. Final rotation check — exact token must still exist
+        if not await r.sismember(f"user_refresh:{user_id}", refresh_token):
+            raise HTTPException(status_code=401, detail="Token no longer valid")
+
+        return user_id
+
+
 #alembic.ini
 [alembic]
 script_location = alembic
