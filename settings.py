@@ -1,5 +1,35 @@
+#alembic.ini
+[alembic]
+script_location = alembic
+#alembic env.py
 
+from logging.config import fileConfig
+from api.core.database import engine
+from alembic import context
+from sqlmodel import SQLModel
+# import all your databases here
+from api.users.models import User
 
+# configure alembic
+config = context.config
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+    
+# use the async engine synchronously
+
+connectable = engine.sync_engine
+
+with connectable.connect() as connection:
+    context.configure(
+        connection = connection,
+        target_metadata = SQLModel.metadata,
+        compare_type = True,
+        compare_server_default= True,
+        
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+##
 
 from sqlalchemy.ext.asyncio import create_async_engine,AsyncSession,async_sessionmaker
 from api.core.settings import get_settings
