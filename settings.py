@@ -1,3 +1,45 @@
+# core/auth.py or services/token.py — FINAL FOREVER
+import jwt
+from fastapi import HTTPException
+
+async def validate_refresh_token(refresh_token: str, redis: RedisDep) -> int:
+    # 1. Fast pre-check (no crypto)
+    try:
+        unverified = jwt.decode(refresh_token, options={"verify_signature": False})
+        jti = unverified.get("jti")
+        if not jti or unverified.get("token_type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Malformed token")
+
+    # 2. Blacklist check
+    if await redis.get(f"blacklist:refresh:{jti}"):
+        raise HTTPException(status_code=401, detail="Token revoked")
+
+    # 3. Full verification
+    try:
+        payload = jwt.decode(
+            refresh_token,
+            settings.PUBLIC_KEY,
+            algorithms=[settings.ALGORITHM],
+            options={"require": ["exp", "iat", "sub", "jti", "token_type"]},
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = int(payload["sub"])
+
+    # 4. FINAL ROTATION / REPLAY PROTECTION — THIS IS THE KILLER FEATURE
+    current_token = await redis.sismember(f"user_refresh:{user_id}", refresh_token)
+    if not current_token:
+        # Optional: auto-blacklist jti if someone tries to reuse old token
+        await redis.set(f"blacklist:refresh:{jti}", "1", ex=timedelta(days=7))
+        raise HTTPException(status_code=401, detail="Token no longer valid")
+
+    return user_id
+
 #old validate refresh token 
 async def revoke_refresh_token(refresh_token: str):
     try:
