@@ -1,3 +1,30 @@
+@router.post("/register")
+async def register(
+    user_data: UserCreate,
+    background_tasks: BackgroundTasks = Depends(),
+    db: DB,
+    redis: RedisDep,
+    mailer: MailerDep,
+):
+    result = await add_user(
+        user_data=user_data,
+        db=db,
+        background_tasks=background_tasks,
+        redis=redis,
+        mailer=mailer,
+    )
+    return result  # contains message + reg_token + email
+
+
+# ── VERIFY REGISTRATION OTP
+@router.post("/register/verify")
+async def verify_reg_otp(
+    data: VerifyRegistrationOtp,
+    db: DB,
+    redis: RedisDep,
+):
+    user = await verify_registration_otp(data, db, redis)
+    return {"message": "Account verified successfully", "user": user}
 
 # routes/auth.py — FINAL, THIN, SACRED, ETERNAL
 from fastapi import APIRouter, Depends, Request, HTTPException, status
