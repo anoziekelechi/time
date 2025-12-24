@@ -1,3 +1,33 @@
+####
+# Reuse the helper function from earlier
+def get_s3_url(key: str | None):
+    if not key: return None
+    return s3_client.generate_presigned_url(
+        'get_object',
+        Params={'Bucket': BUCKET_NAME, 'Key': key},
+        ExpiresIn=3600
+    )
+
+#get home
+@app.get("/home", response_model=HomeResponse)
+def get_home_settings(session: Session = Depends(get_session)):
+    # Always fetch the one marked "MAIN"
+    statement = select(Home).where(Home.config_type == "MAIN")
+    home = session.exec(statement).first()
+    
+    if not home:
+        raise HTTPException(status_code=404, detail="Settings not initialized")
+
+    return HomeResponse(
+        sitename=home.sitename,
+        logo_url=get_s3_url(home.logo_key), # Helper function for presigned URL
+        image_url=get_s3_url(home.image_key)
+    )
+
+
+###
+
+
 else:
             # OPTIONAL: Delete old files from S3 before updating keys
             if home.logo_key:
