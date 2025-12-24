@@ -1,4 +1,71 @@
+else:
+            # OPTIONAL: Delete old files from S3 before updating keys
+            if home.logo_key:
+                s3_client.delete_object(Bucket=BUCKET_NAME, Key=home.logo_key)
+            if home.image_key:
+                s3_client.delete_object(Bucket=BUCKET_NAME, Key=home.image_key)
 
+            # UPDATE: Replace fields
+            home.sitename = sitename
+            home.logo_key = logo_key
+            home.image_key = image_key
+#new
+import uuid
+from typing import Annotated
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from sqlmodel import Session, select
+
+router = APIRouter()
+
+@router.post("/home/setup", status_code=201)
+async def setup_home(
+    sitename: Annotated[str, Form()],
+    logo: Annotated[UploadFile, File()],
+    image: Annotated[UploadFile, File()],
+    session: Session = Depends(get_session)
+):
+    # 1. Secure Validation
+    await validate_file_securely(logo)
+    await validate_file_securely(image)
+
+    # 2. Check if the "MAIN" singleton record already exists
+    statement = select(Home).where(Home.config_type == "MAIN")
+    home = session.exec(statement).first()
+    
+    # 3. Prepare unique S3 Keys
+    logo_key = f"home/logo-{uuid.uuid4()}"
+    image_key = f"home/hero-{uuid.uuid4()}"
+
+    try:
+        # 4. Stream uploads to S3 (Efficient for 2025)
+        s3_client.upload_fileobj(logo.file, BUCKET_NAME, logo_key)
+        s3_client.upload_fileobj(image.file, BUCKET_NAME, image_key)
+
+        if not home:
+            # CREATE: New record with the unique config_type
+            home = Home(
+                sitename=sitename, 
+                config_type="MAIN", # Enforces the singleton via DB constraint
+                logo_key=logo_key, 
+                image_key=image_key
+            )
+            session.add(home)
+        else:
+            # UPDATE: Replace fields on the existing "MAIN" record
+            home.sitename = sitename
+            home.logo_key = logo_key
+            home.image_key = image_key
+        
+        session.commit()
+        session.refresh(home)
+        return {"message": "Home settings updated", "config_type": home.config_type}
+
+    except Exception as e:
+        session.rollback()
+        # Optionally delete uploaded S3 files here if the DB commit fails
+        raise HTTPException(status_code=500, detail="Failed to save settings")
+
+#
 import asyncio
 
 # This runs both validations at the same time
