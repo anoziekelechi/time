@@ -1,3 +1,22 @@
+import magic
+from fastapi import HTTPException, UploadFile
+
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+async def validate_file_securely(file: UploadFile):
+    # Read first 2KB for magic byte detection
+    header = await file.read(2048)
+    await file.seek(0) # Always rewind!
+    
+    detected_mime = magic.from_buffer(header, mime=True)
+    
+    if detected_mime not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=415, 
+            detail=f"File {file.filename} is an invalid type: {detected_mime}"
+        )
+    return detected_mime
+
 ####
 # Reuse the helper function from earlier
 def get_s3_url(key: str | None):
