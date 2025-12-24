@@ -1,3 +1,50 @@
+
+import asyncio
+
+# This runs both validations at the same time
+await asyncio.gather(
+    validate_file_securely(image),
+    validate_file_securely(logo)
+)
+
+#
+@app.post("/products/{product_id}/media")
+async def upload_product_media(
+    product_id: int, 
+    image: UploadFile = File(...), 
+    logo: UploadFile = File(...), 
+    session: Session = Depends(get_session)
+):
+    # Validate both files individually
+    await validate_file_securely(image)
+    await validate_file_securely(logo)
+
+    # Process S3 uploads for both...
+    # unique_image_key = ...
+    # unique_logo_key = ...
+    
+    return {"message": "Image and Logo uploaded successfully"}
+
+#
+import magic
+from fastapi import HTTPException, UploadFile
+
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/svg"}
+
+async def validate_file_securely(file: UploadFile):
+    # Read first 2KB for magic byte detection
+    header = await file.read(2048)
+    await file.seek(0) # Always rewind!
+    
+    detected_mime = magic.from_buffer(header, mime=True)
+    
+    if detected_mime not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=415, 
+            detail=f"File {file.filename} is an invalid type: {detected_mime}"
+        )
+    return detected_mime
+
 #boto
 import boto3
 from botocore.exceptions import ClientError
