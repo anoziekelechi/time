@@ -1,3 +1,28 @@
+#boto3
+import boto3
+from botocore.config import Config
+
+# For 2025: Use a config object to handle timeouts and retries automatically
+s3_config = Config(
+    region_name="us-east-1", # Replace with your bucket's region
+    retries={"max_attempts": 3, "mode": "standard"}
+)
+
+# Initialize the S3 client
+s3_client = boto3.client(
+    "s3",
+    aws_access_key_id="YOUR_ACCESS_KEY",
+    aws_secret_access_key="YOUR_SECRET_KEY",
+    config=s3_config
+)
+
+BUCKET_NAME = "your-app-bucket-name"
+
+
+###
+
+
+
 import magic
 from fastapi import HTTPException, UploadFile
 
