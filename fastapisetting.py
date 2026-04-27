@@ -1,3 +1,23 @@
+#mail.py
+from fastapi_mail import FastMail, ConnectionConfig
+from api.core.settings import get_settings
+from typing import AsyncGenerator,Annotated
+#from api.main import app
+from fastapi import Depends
+
+mail_config = ConnectionConfig(
+    MAIL_USERNAME=get_settings().mail_username,
+    MAIL_PASSWORD=get_settings().mail_password,
+    MAIL_FROM=get_settings().mail_from,
+    MAIL_PORT=get_settings().mail_port,
+    MAIL_SERVER=get_settings().mail_server,
+    MAIL_STARTTLS=True,
+    MAIL_SSL_TLS=False,
+    USE_CREDENTIALS=True,
+    VALIDATE_CERTS=True,
+)
+
+
 # core/settings.py
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
