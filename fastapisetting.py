@@ -1,3 +1,16 @@
+#redis.py
+import redis.asyncio as redis
+from redis.asyncio import Redis
+from typing import AsyncGenerator,Annotated
+from contextlib import asynccontextmanager
+from fastapi import Depends
+from api.main import app
+
+async def get_redis() ->Redis:
+    return app.state.redis
+RedisDep = Annotated[Redis, Depends(get_redis)]
+    
+
 #mail.py
 from fastapi_mail import FastMail, ConnectionConfig
 from api.core.settings import get_settings
